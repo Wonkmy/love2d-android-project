@@ -19,6 +19,15 @@ local playerLevel = 1
 local playerExp = 0
 local needExp = 100
 
+-- 结束展示分数板相关
+local killCount = 0
+local gameOver = false
+
+-- 命中停顿
+local hitStopTimer = 0
+-- 命中停顿cd
+local hitStopCD = 0
+
 enemyBullets = {}
 joystick = nil
 
@@ -36,7 +45,9 @@ local spawnInterval = Config.wave.spawnInterval
 local waveTimer = 0
 local waveDuration = Config.wave.waveDuration
 local waveCooldown = Config.wave.waveCooldown
-local inWave = false
+inWave = false
+local waveWarning = false
+local waveWarningTimer = 0
 
 function love.load()
     love.window.setMode(800, 600)
@@ -47,13 +58,42 @@ function love.load()
 end
 
 function love.update(dt)
+    -- Hit Stop
+    if hitStopCD > 0 then
+        hitStopCD = hitStopCD - dt
+    end
+    if hitStopTimer > 0 then
+        hitStopTimer = hitStopTimer - dt
+        return
+    end
+    -- 玩家死亡后停止游戏逻辑
+    if gameOver then
+        return
+    end
+
+    if player.hp <= 0 then
+        player.hp = 0
+        gameOver = true
+        return
+    end
+
     player:update(dt)
     camera:follow(player, dt)
 
     -- 自动攻击计时
     attackTimer = attackTimer + dt
 
-    if attackTimer >= Config.player.attackInterval then
+    local attackInterval =
+    Config.player.attackInterval
+
+    -- 尸潮期间射速降低
+    if inWave then
+        attackInterval =
+            attackInterval *
+            Config.wave.berserkAttackSpeedRate
+    end
+
+    if attackTimer >= attackInterval then
         attackTimer = 0
         autoAttack()
     end
@@ -65,10 +105,27 @@ function love.update(dt)
 
     waveTimer = waveTimer + dt
 
-    -- 进入尸潮
-    if not inWave and waveTimer >= waveCooldown then
-        inWave = true
-        waveTimer = 0
+    -- 尸潮预警
+    if
+        not inWave
+        and not waveWarning
+        and waveTimer >= waveCooldown - 3
+    then
+        waveWarning = true
+        waveWarningTimer = 3
+    end
+
+    -- 预警倒计时
+    if waveWarning then
+        waveWarningTimer =
+            waveWarningTimer - dt
+
+        if waveWarningTimer <= 0 then
+            waveWarning = false
+
+            inWave = true
+            waveTimer = 0
+        end
     end
 
     -- 尸潮结束
@@ -79,14 +136,14 @@ function love.update(dt)
 
     spawnTimer = spawnTimer + dt
 
-    if spawnTimer >= spawnInterval then
+    if player.hp > 0 and spawnTimer >= spawnInterval then
         spawnTimer = 0
 
         local spawnCount = 1
 
         -- 尸潮期间大量刷怪
         if inWave then
-            spawnCount = 5
+            spawnCount = 3
         end
 
         for i = 1, spawnCount do
@@ -141,6 +198,15 @@ function love.update(dt)
                 playerExp = playerExp - needExp
 
                 needExp = math.floor(needExp * 1.25)
+                -- 升级提升攻击力
+                Config.bullet.damage = Config.bullet.damage * Config.bullet.levelDamageGrow
+                -- 升级增加攻速
+                Config.player.attackInterval = Config.player.attackInterval - Config.bullet.levelAttackSpeedGrow
+
+                -- 限制最小攻速
+                if Config.player.attackInterval < 0.02 then
+                    Config.player.attackInterval = 0.02
+                end
             end
         end
     end
@@ -179,8 +245,24 @@ function love.update(dt)
                 local dist = math.sqrt(dx * dx + dy * dy)
 
                 if dist < bullets[i].radius + enemies[j].radius and bullets[i].hitEnemies[enemies[j]] == nil then
+                    -- 护盾挡子弹
+                    if inWave and enemies[j].shieldHp > 0 then
+                        enemies[j].shieldHp =
+                            enemies[j].shieldHp - 1
 
+                        bullets[i].dead = true
+
+                        break
+                    end
                     enemies[j].hp = enemies[j].hp - bullets[i].damage
+                    -- 命中停顿
+                    if
+                        bullets[i].canKnockback
+                        and hitStopCD <= 0
+                    then
+                        hitStopTimer = 0.05
+                        hitStopCD = 0.08
+                    end
                     -- 小范围溅射
                     for k = 1, #enemies do
 
@@ -227,7 +309,7 @@ function love.update(dt)
                     enemies[j].hitFlash = 0.12
 
                     -- 摄像机震动
-                    camera:addShake(2)
+                    -- camera:addShake(2)
 
                     -- 子弹击退
                     if bullets[i].canKnockback then
@@ -248,6 +330,8 @@ function love.update(dt)
                     if enemies[j].hp <= 0 then
 
                         enemies[j].dead = true
+                        killCount = killCount + 1
+                        table.insert(exps, Exp:new(enemies[j].x, enemies[j].y))
 
                         table.insert(
                             exps,
@@ -327,7 +411,12 @@ function love.draw()
     camera:clear()
 
     drawUI()
+    drawLowHpEffect()
+    drawWaveEffect()
     joystick:draw()
+    if gameOver then
+        drawGameOverUI()
+    end
 end
 
 function spawnEnemy()
@@ -352,25 +441,57 @@ function spawnEnemy()
         y = player.y + distance
     end
 
-    table.insert(enemies, Enemy:new(x, y))
+    local enemy = Enemy:new(x, y)
+
+    if inWave and love.math.random() < 0.2 then
+        enemy.isFastEnemy = true
+    end
+    table.insert(enemies, enemy)
 end
 
 function drawGrid()
-    love.graphics.setColor(0.16, 0.17, 0.2)
 
-    local size = 64
-    local startX = math.floor((camera.x - 100) / size) * size
-    local endX = camera.x + love.graphics.getWidth() + 100
-    local startY = math.floor((camera.y - 100) / size) * size
-    local endY = camera.y + love.graphics.getHeight() + 100
+    local gridSize = 64
 
-    for x = startX, endX, size do
-        love.graphics.line(x, startY, x, endY)
+    local screenW =
+        love.graphics.getWidth() / camera.scale
+
+    local screenH =
+        love.graphics.getHeight() / camera.scale
+
+    local startX =
+        math.floor(camera.x / gridSize) * gridSize
+
+    local startY =
+        math.floor(camera.y / gridSize) * gridSize
+
+    local endX =
+        startX + screenW + gridSize
+
+    local endY =
+        startY + screenH + gridSize
+
+    love.graphics.setColor(0.15, 0.15, 0.15)
+
+    for x = startX, endX, gridSize do
+        love.graphics.line(
+            x,
+            startY,
+            x,
+            endY
+        )
     end
 
-    for y = startY, endY, size do
-        love.graphics.line(startX, y, endX, y)
+    for y = startY, endY, gridSize do
+        love.graphics.line(
+            startX,
+            y,
+            endX,
+            y
+        )
     end
+
+    love.graphics.setColor(1,1,1)
 end
 
 function drawUI()
@@ -382,7 +503,32 @@ function drawUI()
 
     if inWave then
         love.graphics.setColor(1, 0.2, 0.2)
-        love.graphics.print("WAVE !!", 20, 120)
+
+        love.graphics.print(
+                "WAVE !!",
+                20,
+                120
+            )
+
+        love.graphics.setColor(1, 1, 1)
+        elseif waveWarning then
+            local alpha =
+                0.5 +
+                math.sin(love.timer.getTime() * 12) * 0.5
+
+        love.graphics.setColor(
+                1,
+                0.7,
+                0.2,
+                alpha
+            )
+
+        love.graphics.print(
+                "WARNING !!",
+                20,
+                120
+            )
+
         love.graphics.setColor(1, 1, 1)
     end
 
@@ -422,10 +568,12 @@ function autoAttack()
     local nearestDist = math.huge
 
     for i = 1, #enemies do
+
         local dx = enemies[i].x - player.x
         local dy = enemies[i].y - player.y
 
-        local dist = math.sqrt(dx * dx + dy * dy)
+        local dist =
+            math.sqrt(dx * dx + dy * dy)
 
         if dist < nearestDist then
             nearestDist = dist
@@ -439,14 +587,57 @@ function autoAttack()
 
     local baseAngle = player.weaponAngle
 
-    -- 三连发
-    for i = -1, 1 do
+    -- 普通状态
+    local bulletCount = 3
+    local damageRate = 1
 
-        local angle = baseAngle + math.rad(i * 8)
+    -- 尸潮狂暴武器
+    if inWave then
+
+        bulletCount =
+            Config.wave.berserkBulletCount
+
+        damageRate =
+            Config.wave.berserkDamageRate
+    end
+
+    local half =
+        math.floor(bulletCount / 2)
+
+    for i = -half, half do
+
+        local angle =
+            baseAngle +
+            math.rad(i * 4)
 
         local dirX = math.cos(angle)
         local dirY = math.sin(angle)
 
+        local bullet =
+            Bullet:new(
+                player.x,
+                player.y,
+                dirX,
+                dirY,
+                "player"
+            )
+
+        -- 只有中间子弹有真实伤害
+        if i ~= 0 then
+
+            bullet.damage = 0
+            bullet.canKnockback = false
+
+        else
+
+            bullet.damage =
+                bullet.damage *
+                damageRate
+        end
+
+        table.insert(bullets, bullet)
+
+        -- 枪口火花
         table.insert(muzzleFlashes, {
             x = player.x + dirX * 28,
             y = player.y + dirY * 28,
@@ -456,31 +647,177 @@ function autoAttack()
 
             life = 0.08
         })
-
-        local bullet = Bullet:new(player.x, player.y, dirX, dirY, "player")
-
-        -- 只有中间子弹有击退
-        if i ~= 0 then
-            bullet.canKnockback = false
-        end
-
-        table.insert(bullets, bullet)
-
-        -- table.insert(
-        --     bullets,
-        --     Bullet:new(
-        --         player.x,
-        --         player.y,
-        --         dirX,
-        --         dirY,
-        --         "player"
-        --     )
-        -- )
     end
+end
+
+function drawGameOverUI()
+    local w = love.graphics.getWidth()
+    local h = love.graphics.getHeight()
+
+    love.graphics.setColor(0, 0, 0, 0.6)
+    love.graphics.rectangle("fill", 0, 0, w, h)
+
+    local panelW = 360
+    local panelH = 260
+    local panelX = w / 2 - panelW / 2
+    local panelY = h / 2 - panelH / 2
+
+    love.graphics.setColor(0.12, 0.12, 0.14, 0.95)
+    love.graphics.rectangle("fill", panelX, panelY, panelW, panelH, 12, 12)
+
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.printf("You Losed!!!", panelX, panelY + 30, panelW, "center")
+
+    love.graphics.printf("Score: " .. killCount, panelX, panelY + 80, panelW, "center")
+    love.graphics.printf("Survival Time: " .. math.floor(gameTime) .. "s", panelX, panelY + 110, panelW, "center")
+    love.graphics.printf("Level: LV." .. playerLevel, panelX, panelY + 140, panelW, "center")
+    love.graphics.setColor(0.25, 0.55, 1)
+    love.graphics.rectangle("fill", panelX + 100, panelY + 185, 160, 46, 8, 8)
+
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.printf("Restart", panelX + 100, panelY + 199, 160, "center")
+
+    love.graphics.setColor(1, 1, 1)
+end
+
+function restartGame()
+    player = Player:new(0, 0)
+    camera = Camera:new()
+
+    enemies = {}
+    bullets = {}
+    enemyBullets = {}
+    exps = {}
+    muzzleFlashes = {}
+    damageTexts = {}
+
+    spawnTimer = 0
+    gameTime = 0
+    waveTimer = 0
+    inWave = false
+
+    playerLevel = 1
+    playerExp = 0
+    needExp = 100
+    killCount = 0
+
+    gameOver = false
+    Config.player.attackInterval = Config.player.defaultAttackInterval
+    Config.bullet.damage = Config.bullet.defaultDamage
+end
+
+function drawLowHpEffect()
+
+    local hpRate =
+        player.hp / player.maxHp
+
+    -- 低于40%血量才开始出现效果
+    if hpRate > 0.4 then
+        return
+    end
+
+    local w = love.graphics.getWidth()
+    local h = love.graphics.getHeight()
+
+    -- 血越低越红
+    local alpha =
+        (1 - hpRate / 0.4) * 0.45
+
+    -- 呼吸感
+    alpha =
+        alpha +
+        math.sin(love.timer.getTime() * 6) * 0.05
+
+    love.graphics.setColor(
+        1,
+        0,
+        0,
+        alpha
+    )
+
+    -- 四周红色压迫层
+    local border = 120
+
+    love.graphics.rectangle(
+        "fill",
+        0,
+        0,
+        w,
+        border
+    )
+
+    love.graphics.rectangle(
+        "fill",
+        0,
+        h - border,
+        w,
+        border
+    )
+
+    love.graphics.rectangle(
+        "fill",
+        0,
+        0,
+        border,
+        h
+    )
+
+    love.graphics.rectangle(
+        "fill",
+        w - border,
+        0,
+        border,
+        h
+    )
+
+    love.graphics.setColor(1,1,1)
+end
+
+function drawWaveEffect()
+
+    if not inWave then
+        return
+    end
+
+    local w = love.graphics.getWidth()
+    local h = love.graphics.getHeight()
+
+    local alpha =
+        0.08 +
+        math.sin(love.timer.getTime() * 4) * 0.02
+
+    love.graphics.setColor(
+        1,
+        0,
+        0,
+        alpha
+    )
+
+    love.graphics.rectangle(
+        "fill",
+        0,
+        0,
+        w,
+        h
+    )
+
+    love.graphics.setColor(1,1,1)
 end
 
 
 function love.touchpressed(id, x, y)
+    if gameOver then
+        local w = love.graphics.getWidth()
+        local h = love.graphics.getHeight()
+
+        local btnX = w / 2 - 80
+        local btnY = h / 2 + 55
+
+        if x >= btnX and x <= btnX + 160 and y >= btnY and y <= btnY + 46 then
+            restartGame()
+        return
+        end
+    end
     joystick:touchpressed(id, x, y)
 end
 
@@ -493,6 +830,18 @@ function love.touchreleased(id, x, y)
 end
 
 function love.mousepressed(x, y, button)
+    if gameOver and button == 1 then
+        local w = love.graphics.getWidth()
+        local h = love.graphics.getHeight()
+
+        local btnX = w / 2 - 80
+        local btnY = h / 2 + 55
+
+        if x >= btnX and x <= btnX + 160 and y >= btnY and y <= btnY + 46 then
+            restartGame()
+            return
+        end
+    end
     if button == 1 then
         joystick:touchpressed("mouse", x, y)
     end
@@ -509,3 +858,5 @@ function love.mousereleased(x, y, button)
         joystick:touchreleased("mouse", x, y)
     end
 end
+
+

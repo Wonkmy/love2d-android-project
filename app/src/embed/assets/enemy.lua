@@ -19,7 +19,10 @@ function Enemy:new(x, y)
         dead = false,
         deadTimer = 0,
 
-        scale = 0.1
+        scale = 0.1,
+        isFastEnemy = false,
+        hasShield = false,
+        shieldHp = 1,
     }
     setmetatable(obj, self)
     self.__index = self
@@ -30,7 +33,9 @@ function Enemy:new(x, y)
 end
 
 function Enemy:update(dt, player)
-
+    if player.hp <= 0 then
+        return
+    end
     -- 死亡动画：只缩小，不再移动/攻击
     if self.dead then
         self.deadTimer = self.deadTimer + dt
@@ -65,6 +70,13 @@ function Enemy:update(dt, player)
     -- 进入攻击范围后减速
     local moveSpeed = self.speed
 
+    -- 高速敌人
+    if self.isFastEnemy then
+        moveSpeed =
+            moveSpeed *
+            Config.wave.enemySpeedRate
+    end
+
     if dist <= self.attackRange then
         moveSpeed = self.speed * 0.25
     end
@@ -77,7 +89,38 @@ function Enemy:update(dt, player)
 
         if self.attackTimer >= self.attackInterval then
             self.attackTimer = 0
-            table.insert(enemyBullets, Bullet:new(self.x, self.y, dx, dy, "enemy"))
+            if inWave then
+                for i = -1, 1 do
+                    local angle =
+                        math.atan2(dy, dx) +
+                        math.rad(i * 12)
+
+                    local dirX = math.cos(angle)
+                    local dirY = math.sin(angle)
+
+                    table.insert(
+                        enemyBullets,
+                        Bullet:new(
+                            self.x,
+                            self.y,
+                            dirX,
+                            dirY,
+                            "enemy"
+                        )
+                    )
+                end
+            else
+                table.insert(
+                    enemyBullets,
+                    Bullet:new(
+                        self.x,
+                        self.y,
+                        dx,
+                        dy,
+                        "enemy"
+                    )
+                )
+            end
         end
     end
 
@@ -105,6 +148,36 @@ function Enemy:draw()
         love.graphics.setColor(1, 1, 1)
     end
 
+    -- 高速敌人轻微染色
+    if self.isFastEnemy then
+        love.graphics.setColor(1, 0.5, 0.5)
+    end
     love.graphics.draw(Enemy_text, self.x, self.y, math.rad(self.angle + 90), 0.1 * self.scale, 0.1 * self.scale, Enemy_text:getWidth() / 2, Enemy_text:getHeight() / 2)
+    -- 护盾
+    if inWave and self.shieldHp > 0 then
+        local shieldDist = 24
+
+        local sx =
+            self.x +
+            math.cos(math.rad(self.angle)) *
+            shieldDist
+
+        local sy =
+            self.y +
+            math.sin(math.rad(self.angle)) *
+            shieldDist
+
+        love.graphics.setColor(0.3, 0.8, 1)
+
+        love.graphics.rectangle(
+            "fill",
+            sx - 10,
+            sy - 6,
+            20,
+            12
+        )
+
+        love.graphics.setColor(1, 1, 1)
+    end
     love.graphics.setColor(1,1,1)
 end

@@ -4,7 +4,8 @@ function Camera:new()
     local obj = {
         x = 0,
         y = 0,
-        shake = 0
+        shake = 0,
+        scale = 1
     }
     setmetatable(obj, self)
     self.__index = self
@@ -13,8 +14,9 @@ end
 
 function Camera:follow(target, dt)
 
-    local screenW = love.graphics.getWidth()
-    local screenH = love.graphics.getHeight()
+    local screenW = love.graphics.getWidth() / self.scale
+
+    local screenH = love.graphics.getHeight() / self.scale
 
     local centerX = self.x + screenW / 2
     local centerY = self.y + screenH / 2
@@ -36,6 +38,22 @@ function Camera:follow(target, dt)
         moveY = dy - deadZone * (dy / math.abs(dy))
     end
 
+    -- 根据敌人数量动态缩放镜头
+    local targetScale = 1
+    if enemies then
+        local enemyCount = #enemies
+        -- 敌人越多镜头越远
+        targetScale =
+            math.max(
+                0.72,
+                1 - enemyCount * 0.003
+            )
+    end
+
+    self.scale =
+        self.scale +
+        (targetScale - self.scale) *
+        dt * 2
     -- 缓动跟随
     self.x = self.x + moveX * dt * 5
     self.y = self.y + moveY * dt * 5
@@ -54,8 +72,16 @@ function Camera:follow(target, dt)
 end
 
 function Camera:apply()
+
     love.graphics.push()
-    love.graphics.translate(-self.x, -self.y)
+
+    -- 缩放
+    love.graphics.scale(self.scale, self.scale)
+
+    love.graphics.translate(
+        -self.x,
+        -self.y
+    )
 end
 
 function Camera:clear()

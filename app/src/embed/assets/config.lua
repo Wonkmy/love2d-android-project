@@ -1,9 +1,10 @@
+-- 第一梯队（强烈建议立刻优化）
 Config = {
     player = {
         hp = 500,-- 玩家初始生命值
         moveSpeed = 220,-- 玩家移动速度
-
         attackInterval = 1.0,-- 玩家自动攻击间隔
+        defaultAttackInterval = 1.0,
         attackRange = 260-- 玩家自动攻击范围
     },
 
@@ -19,6 +20,9 @@ Config = {
     bullet = {
         speed = 500,-- 子弹速度
         damage = 10,-- 子弹伤害
+        defaultDamage = 10,
+        levelDamageGrow = 5,
+        levelAttackSpeedGrow = 0.02,
         knockback = 220,-- 子弹击退力度
         pierceCount = 1,-- 穿透数（被击中后仍能继续前进并伤害其他目标的次数）
         splashRadius = 80,-- 溅射半径
@@ -28,7 +32,12 @@ Config = {
     wave = {
         spawnInterval = 1.2,-- 每波敌人生成间隔
         waveDuration = 8,-- 每波持续时间
-        waveCooldown = 15-- 波与波之间的冷却时间
+        waveCooldown = 15,-- 波与波之间的冷却时间
+        enemySpeedRate = 1.6,
+
+        berserkBulletCount = 10,
+        berserkDamageRate = 10,
+        berserkAttackSpeedRate = 0.7,
     }
 
 }
