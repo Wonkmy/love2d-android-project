@@ -3,12 +3,21 @@ require("enemy")
 require("camera")
 require("config")
 require("bullet")
+require("exp")
 require("joystick")
 
 local player
 camera = nil
 enemies = {}
 local bullets = {}
+local muzzleFlashes = {}
+
+local exps = {}
+local damageTexts = {}-- 飘字列表
+
+local playerLevel = 1
+local playerExp = 0
+local needExp = 100
 
 enemyBullets = {}
 joystick = nil
@@ -39,7 +48,7 @@ end
 
 function love.update(dt)
     player:update(dt)
-    camera:follow(player)
+    camera:follow(player, dt)
 
     -- 自动攻击计时
     attackTimer = attackTimer + dt
@@ -85,6 +94,58 @@ function love.update(dt)
         end
     end
 
+    for i = #damageTexts, 1, -1 do
+
+        damageTexts[i].life = damageTexts[i].life - dt
+
+        -- 向上漂浮
+        damageTexts[i].y = damageTexts[i].y - 80 * dt
+
+        if damageTexts[i].life <= 0 then
+            table.remove(damageTexts, i)
+        end
+    end
+
+
+    for i = #muzzleFlashes, 1, -1 do
+
+        muzzleFlashes[i].life = muzzleFlashes[i].life - dt
+
+        if muzzleFlashes[i].life <= 0 then
+            table.remove(muzzleFlashes, i)
+        end
+    end
+
+
+    for i = #exps, 1, -1 do
+
+        exps[i]:update(dt, player)
+
+        local dx = exps[i].x - player.x
+        local dy = exps[i].y - player.y
+
+        local dist = math.sqrt(dx * dx + dy * dy)
+
+        -- 吃经验
+        if dist < exps[i].radius + player.radius then
+
+            playerExp = playerExp + exps[i].value
+
+            table.remove(exps, i)
+
+            -- 升级
+            if playerExp >= needExp then
+
+                playerLevel = playerLevel + 1
+
+                playerExp = playerExp - needExp
+
+                needExp = math.floor(needExp * 1.25)
+            end
+        end
+    end
+
+
     for i = #enemyBullets, 1, -1 do
         enemyBullets[i]:update(dt)
 
@@ -109,24 +170,96 @@ function love.update(dt)
 
         -- 子弹命中敌人
         for j = #enemies, 1, -1 do
-            local dx = bullets[i].x - enemies[j].x
-            local dy = bullets[i].y - enemies[j].y
 
-            local dist = math.sqrt(dx * dx + dy * dy)
+        if not enemies[j].dead then
 
-            if dist < bullets[i].radius + enemies[j].radius then
-                enemies[j].hp = enemies[j].hp - bullets[i].damage
-                -- 子弹击退
-                enemies[j].knockbackX = enemies[j].knockbackX + bullets[i].dirX * Config.bullet.knockback
-                enemies[j].knockbackY = enemies[j].knockbackY + bullets[i].dirY * Config.bullet.knockback
+                local dx = bullets[i].x - enemies[j].x
+                local dy = bullets[i].y - enemies[j].y
 
-                bullets[i].dead = true
+                local dist = math.sqrt(dx * dx + dy * dy)
 
-                if enemies[j].hp <= 0 then
-                    table.remove(enemies, j)
+                if dist < bullets[i].radius + enemies[j].radius and bullets[i].hitEnemies[enemies[j]] == nil then
+
+                    enemies[j].hp = enemies[j].hp - bullets[i].damage
+                    -- 小范围溅射
+                    for k = 1, #enemies do
+
+                        local otherEnemy = enemies[k]
+
+                        -- 跳过自己和死亡敌人
+                        if
+                            otherEnemy ~= enemies[j]
+                            and not otherEnemy.dead
+                        then
+
+                            local sdx =
+                                otherEnemy.x - enemies[j].x
+
+                            local sdy =
+                                otherEnemy.y - enemies[j].y
+
+                            local sdist =
+                                math.sqrt(sdx * sdx + sdy * sdy)
+
+                            if sdist <= Config.bullet.splashRadius then
+
+                                otherEnemy.hp =
+                                    otherEnemy.hp -
+                                    bullets[i].damage *
+                                    Config.bullet.splashDamageRate
+
+                                otherEnemy.hitFlash = 0.08
+                            end
+                        end
+                    end
+
+                    table.insert(damageTexts, {
+                        x = enemies[j].x,
+                        y = enemies[j].y,
+
+                        value = bullets[i].damage,
+
+                        life = 0.5
+                    })
+
+
+                    -- 击中闪烁
+                    enemies[j].hitFlash = 0.12
+
+                    -- 摄像机震动
+                    camera:addShake(2)
+
+                    -- 子弹击退
+                    if bullets[i].canKnockback then
+                        enemies[j].knockbackX = enemies[j].knockbackX + bullets[i].dirX * Config.bullet.knockback
+                        enemies[j].knockbackY = enemies[j].knockbackY + bullets[i].dirY * Config.bullet.knockback
+                    end
+
+                    -- 记录已经被这颗子弹击中的敌人
+                    bullets[i].hitEnemies[enemies[j]] = true
+
+                    bullets[i].pierceLeft = bullets[i].pierceLeft - 1
+
+                    if bullets[i].pierceLeft < 0 then
+                        bullets[i].dead = true
+                    end
+
+
+                    if enemies[j].hp <= 0 then
+
+                        enemies[j].dead = true
+
+                        table.insert(
+                            exps,
+                            Exp:new(
+                                enemies[j].x,
+                                enemies[j].y
+                            )
+                        )
+                    end
+
+                    break
                 end
-
-                break
             end
         end
 
@@ -137,6 +270,10 @@ function love.update(dt)
 
     for i = #enemies, 1, -1 do
         enemies[i]:update(dt, player)
+        -- 死亡动画结束后真正删除
+        if enemies[i].dead and enemies[i].scale <= 0 then
+            table.remove(enemies, i)
+        end
     end
 end
 
@@ -146,8 +283,37 @@ function love.draw()
     drawGrid()
     player:draw()
 
+    for i = 1, #damageTexts do
+
+        local t = damageTexts[i]
+
+        love.graphics.setColor(1, 1, 1, t.life * 2)
+
+        love.graphics.print(tostring(t.value), t.x, t.y)
+    end
+
+    love.graphics.setColor(1, 1, 1)
+
+
+    for i = 1, #muzzleFlashes do
+
+        local flash = muzzleFlashes[i]
+
+        local size = flash.life * 120
+
+        love.graphics.setColor(1, 0.9, 0.3, flash.life * 12)
+
+        love.graphics.circle("fill", flash.x, flash.y, size)
+    end
+    love.graphics.setColor(1,1,1)
+
+
     for i = 1, #bullets do
         bullets[i]:draw()
+    end
+
+    for i = 1, #exps do
+        exps[i]:draw()
     end
 
     for i = 1, #enemyBullets do
@@ -231,10 +397,28 @@ function drawUI()
 
     love.graphics.setColor(1, 1, 1)
     love.graphics.rectangle("line", 20, 70, 200, 16)
+
+        -- 经验条背景
+    love.graphics.setColor(0.2, 0.2, 0.2)
+
+    love.graphics.rectangle("fill", 20, 150, 220, 18)
+
+    -- 经验条
+    love.graphics.setColor(0.2, 0.8, 1)
+
+    love.graphics.rectangle("fill", 20, 150, 220 * (playerExp / needExp), 18)
+
+    love.graphics.setColor(1, 1, 1)
+
+    love.graphics.rectangle("line", 20, 150, 220, 18)
+
+    love.graphics.print("LV." .. playerLevel, 20, 175)
+
 end
 
 -- 自动攻击
 function autoAttack()
+
     local nearestDist = math.huge
 
     for i = 1, #enemies do
@@ -252,10 +436,47 @@ function autoAttack()
     if nearestDist > Config.player.attackRange then
         return
     end
-    local dirX = math.cos(player.weaponAngle)
-    local dirY = math.sin(player.weaponAngle)
 
-    table.insert(bullets, Bullet:new(player.x, player.y, dirX, dirY, "player"))
+    local baseAngle = player.weaponAngle
+
+    -- 三连发
+    for i = -1, 1 do
+
+        local angle = baseAngle + math.rad(i * 8)
+
+        local dirX = math.cos(angle)
+        local dirY = math.sin(angle)
+
+        table.insert(muzzleFlashes, {
+            x = player.x + dirX * 28,
+            y = player.y + dirY * 28,
+
+            dirX = dirX,
+            dirY = dirY,
+
+            life = 0.08
+        })
+
+        local bullet = Bullet:new(player.x, player.y, dirX, dirY, "player")
+
+        -- 只有中间子弹有击退
+        if i ~= 0 then
+            bullet.canKnockback = false
+        end
+
+        table.insert(bullets, bullet)
+
+        -- table.insert(
+        --     bullets,
+        --     Bullet:new(
+        --         player.x,
+        --         player.y,
+        --         dirX,
+        --         dirY,
+        --         "player"
+        --     )
+        -- )
+    end
 end
 
 

@@ -10,7 +10,8 @@ function Player:new(x, y)
         maxHp = Config.player.hp,
         angle = 0,
         targetAngle = 0,
-        weaponAngle = 0
+        weaponAngle = 0,
+        targetEnemy = nil-- 目标敌人
     }
     setmetatable(obj, self)
     self.__index = self
@@ -58,32 +59,48 @@ function Player:update(dt)
     end
     
     -- 武器自动朝向最近敌人
-    if enemies and #enemies > 0 then
+    -- 当前目标失效时重新索敌
+    if self.targetEnemy == nil or self.targetEnemy.dead then
 
         local nearestEnemy = nil
         local nearestDist = math.huge
 
         for i = 1, #enemies do
-            local ex = enemies[i].x - self.x
-            local ey = enemies[i].y - self.y
 
-            local dist = ex * ex + ey * ey
+            if not enemies[i].dead then
 
-            if dist < nearestDist then
-                nearestDist = dist
-                nearestEnemy = enemies[i]
+                local ex = enemies[i].x - self.x
+                local ey = enemies[i].y - self.y
+
+                local dist = math.sqrt(ex * ex + ey * ey)
+
+                -- 只锁定攻击范围内敌人
+                if dist < nearestDist and dist <= Config.player.attackRange then
+                    nearestDist = dist
+                    nearestEnemy = enemies[i]
+                end
             end
         end
 
-        if nearestEnemy then
-            local dx = nearestEnemy.x - self.x
-            local dy = nearestEnemy.y - self.y
-
-            self.weaponAngle = math.atan2(dy, dx)
-        end
+        self.targetEnemy = nearestEnemy
     end
 
+    -- 武器朝向锁定目标
+    if self.targetEnemy then
 
+        local dx = self.targetEnemy.x - self.x
+
+        local dy = self.targetEnemy.y - self.y
+
+        self.weaponAngle = math.atan2(dy, dx)
+
+        -- 超出攻击范围丢失目标
+        local dist = math.sqrt(dx * dx + dy * dy)
+
+        if dist > Config.player.attackRange then
+            self.targetEnemy = nil
+        end
+    end
 end
 
 function Player:draw()
