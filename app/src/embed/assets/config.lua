@@ -35,9 +35,9 @@ Config = {
         waveCooldown = 15,-- 波与波之间的冷却时间
         enemySpeedRate = 1.6,
 
-        berserkBulletCount = 10,
-        berserkDamageRate = 10,
-        berserkAttackSpeedRate = 0.7,
+        berserkBulletCount = 10,--尸潮时的玩家子弹数
+        berserkDamageRate = 10,-- 尸潮时玩家的伤害倍数
+        berserkAttackSpeedRate = 0.7,-- 尸潮时玩家的攻击速度倍数
     }
 
 }

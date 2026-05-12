@@ -415,6 +415,8 @@ function love.draw()
     drawWaveEffect()
     joystick:draw()
     if gameOver then
+        waveTimer = 0
+        inWave = false
         drawGameOverUI()
     end
 end
